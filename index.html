@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Sync-Link | Premium Cinema Vault</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root { --accent: #e50914; --bg: #000; }
+        body { background-color: var(--bg); color: #fff; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; margin: 0; overflow: hidden; height: 100vh; }
+        
+        .view-section { position: absolute; inset: 0; overflow-y: auto; padding-bottom: 120px; display: none; -webkit-overflow-scrolling: touch; }
+        .active-view { display: block !important; }
+        
+        input, textarea { background: rgba(255,255,255,0.1) !important; border: 1px solid transparent !important; color: white !important; outline: none; transition: 0.3s; }
+        input:focus { border-color: var(--accent) !important; }
+        .card-social { background: #141414; border-radius: 12px; padding: 16px; margin-bottom: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+
+        /* Netflix Scroller */
+        .scroller { display: flex; gap: 12px; overflow-x: auto; padding: 10px 24px; scrollbar-width: none; }
+        .scroller::-webkit-scrollbar { display: none; }
+        .movie-card { flex: 0 0 160px; aspect-ratio: 2/3; border-radius: 4px; background-size: cover; background-position: center; position: relative; transition: transform 0.4s; cursor: pointer; }
+        .movie-card:hover { transform: scale(1.1); z-index: 10; border: 2px solid white; }
+        
+        /* Cinema Engine */
+        #cinema-overlay { background: #000; cursor: none; transition: opacity 0.5s; }
+        #cinema-overlay.show-controls { cursor: default; }
+        .video-controls { background: linear-gradient(to top, rgba(0,0,0,0.9), transparent); opacity: 0; transition: opacity 0.4s ease-in-out; pointer-events: none; }
+        .show-controls .video-controls { opacity: 1; pointer-events: auto; }
+        
+        #local-cam { object-fit: cover; background: #222; border-radius: 8px; box-shadow: 0 0 20px rgba(229, 9, 20, 0.4); }
+        .profile-thumb { width: 50px; height: 50px; border-radius: 4px; object-fit: cover; border: 1px solid #333; }
+        
+        .nav-dock { position: fixed; bottom: 0; left: 0; right: 0; z-index: 5000; padding-bottom: env(safe-area-inset-bottom); background: rgba(0,0,0,0.95); border-top: 1px solid #333; }
+    </style>
+</head>
+<body>
+
+    <div id="cinema-overlay" class="fixed inset-0 z-[10000] hidden flex-col show-controls" onmousemove="showControls()" ontouchstart="showControls()">
+        <div class="video-controls absolute top-0 left-0 right-0 p-8 flex justify-between items-center z-[10002]">
+            <button onclick="closeMovie()" class="text-3xl text-white"><i class="fa-solid fa-arrow-left"></i></button>
+            <div class="flex gap-8 items-center">
+                <button onclick="sendHeart()" class="text-3xl text-red-600 active:scale-150 transition-transform"><i class="fa-solid fa-heart"></i></button>
+                <button id="dl-trigger" class="text-2xl text-white/70 hover:text-white"><i class="fa-solid fa-download"></i></button>
+            </div>
+        </div>
+
+        <div class="relative flex-1 flex items-center justify-center">
+            <video id="main-player" class="w-full h-full" playsinline onclick="togglePlay()"></video>
+            <div class="absolute top-24 right-8 flex flex-col gap-4 z-[10001]">
+                <div class="w-28 h-36 bg-zinc-900 rounded-lg overflow-hidden border border-white/20">
+                    <video id="local-cam" class="w-full h-full scale-x-[-1]" autoplay muted playsinline></video>
+                </div>
+            </div>
+            <div id="heart-fountain" class="absolute inset-0 pointer-events-none overflow-hidden"></div>
+        </div>
+
+        <div class="video-controls absolute bottom-0 left-0 right-0 p-8 pt-20 z-[10003]">
+            <div class="group relative w-full h-1.5 bg-white/30 rounded-full mb-6 cursor-pointer" onclick="seek(event)">
+                <div id="video-progress" class="absolute top-0 left-0 h-full bg-red-600 rounded-full transition-all"></div>
+            </div>
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-10">
+                    <button onclick="togglePlay()" id="play-pause-btn" class="text-white text-4xl"><i class="fa-solid fa-play"></i></button>
+                    <button onclick="skip(-10)" class="text-white text-2xl"><i class="fa-solid fa-rotate-left"></i></button>
+                    <button onclick="skip(10)" class="text-white text-2xl"><i class="fa-solid fa-rotate-right"></i></button>
+                    <span id="time-display" class="text-sm font-bold text-white/80 tracking-tighter">00:00 / 00:00</span>
+                </div>
+                <button onclick="toggleFullscreen()" class="text-white text-2xl"><i class="fa-solid fa-expand"></i></button>
+            </div>
+        </div>
+    </div>
+
+    <div id="view-auth" class="fixed inset-0 bg-black z-[9999] flex flex-col items-center justify-center p-8">
+        <h1 class="text-6xl font-black text-red-600 mb-12 tracking-tighter uppercase italic">Sync</h1>
+        <div class="w-full max-w-xs space-y-4">
+            <input type="text" id="auth-u" placeholder="Username" class="w-full p-4 rounded-md">
+            <input type="password" id="auth-p" placeholder="Password" class="w-full p-4 rounded-md">
+            <button onclick="login()" class="w-full bg-red-600 p-4 rounded-md font-bold uppercase tracking-widest">Sign In</button>
+        </div>
+    </div>
+
+    <div id="app-content" class="hidden">
+        <div id="view-home" class="view-section active-view">
+            <div class="px-6 pt-20 pb-4">
+                <h2 class="text-3xl font-bold">Recommended</h2>
+                <p id="conn-status" class="text-[10px] font-bold text-zinc-500 uppercase mt-1 tracking-widest">Connection Required</p>
+            </div>
+            <div class="scroller" id="movie-list"></div>
+        </div>
+
+        <div id="view-search" class="view-section px-6">
+            <h2 class="text-3xl font-bold pt-20 mb-2">Search Members</h2>
+            <p class="text-[10px] text-zinc-500 uppercase font-black tracking-widest mb-6">Find profiles by username</p>
+            
+            <div class="relative mb-8">
+                <input type="text" id="search-q" onkeyup="searchUsers()" placeholder="Type a username..." class="w-full p-4 pr-12 rounded-md">
+                <i class="fa-solid fa-magnifying-glass absolute right-4 top-4 text-zinc-500"></i>
+            </div>
+            
+            <div id="search-results" class="space-y-4"></div>
+        </div>
+
+        <div id="view-notif" class="view-section px-6">
+            <h2 class="text-3xl font-bold pt-20 mb-6">Requests</h2>
+            <div id="request-list" class="space-y-3"></div>
+        </div>
+
+        <div id="view-profile" class="view-section px-6 text-center">
+            <h2 class="text-3xl font-bold pt-20 mb-8" id="display-name">Profile</h2>
+            <div class="card-social flex flex-col items-center">
+                <label class="relative cursor-pointer group mb-6">
+                    <input type="file" id="p-file" accept="image/*" class="hidden" onchange="previewProfilePic(this)">
+                    <div class="w-32 h-32 rounded-md border-2 border-zinc-800 overflow-hidden bg-zinc-900 flex items-center justify-center">
+                        <img id="p-img-view" class="w-full h-full object-cover hidden">
+                        <i id="p-icon-placeholder" class="fa-solid fa-plus text-3xl text-zinc-700"></i>
+                    </div>
+                </label>
+                <textarea id="p-bio-input" placeholder="Update your bio..." class="w-full p-4 rounded-md text-sm mb-4 h-24 resize-none"></textarea>
+                <button onclick="saveProfileData()" class="w-full bg-white text-black p-3 rounded-md font-bold uppercase text-xs">Update Profile</button>
+            </div>
+            <button onclick="window.location.reload()" class="mt-10 text-zinc-600 text-[10px] font-bold uppercase tracking-widest">Logout</button>
+        </div>
+
+        <nav class="nav-dock h-16 flex justify-around items-center">
+            <button onclick="tab('home')" id="nh" class="text-white"><i class="fa-solid fa-house text-xl"></i></button>
+            <button onclick="tab('search')" id="ns" class="text-zinc-500"><i class="fa-solid fa-search text-xl"></i></button>
+            <button onclick="tab('notif')" id="nn" class="text-zinc-500 relative"><i class="fa-solid fa-bell text-xl"></i><span id="badge" class="absolute top-0 right-0 bg-red-600 w-2 h-2 rounded-full hidden"></span></button>
+            <button onclick="tab('profile')" id="np" class="text-zinc-500"><i class="fa-solid fa-user text-xl"></i></button>
+        </nav>
+    </div>
+
+    <script>
+        let me = "";
+        let controlTimer;
+        const movies = [
+            { name: "The Avengers", img: "https://image.tmdb.org/t/p/w500/RYMX2uQBLxrL7XPRqhk67jC7v7.jpg", file: "https://vjs.zencdn.net/v/oceans.mp4" },
+            { name: "Stranger Things", img: "https://image.tmdb.org/t/p/w500/x2LSRm2Rz6v96Gf799iJu6Bv066.jpg", file: "https://vjs.zencdn.net/v/oceans.mp4" },
+            { name: "Inception", img: "https://image.tmdb.org/t/p/w500/9gk7Fn9sVAsOX79p69m3qsOG3vM.jpg", file: "https://vjs.zencdn.net/v/oceans.mp4" }
+        ];
+
+        const getDB = () => JSON.parse(localStorage.getItem('sync_db') || '{}');
+        const saveDB = (db) => localStorage.setItem('sync_db', JSON.stringify(db));
+
+        function login() {
+            const u = document.getElementById('auth-u').value.trim().toLowerCase();
+            const p = document.getElementById('auth-p').value;
+            if(!u || !p) return;
+            let db = getDB();
+            if(!db[u]) db[u] = { pass: p, linked: false, requests: [], bio: "", pic: "" };
+            saveDB(db); me = u;
+            document.getElementById('view-auth').style.display = 'none';
+            document.getElementById('app-content').classList.remove('hidden');
+            document.getElementById('display-name').innerText = me;
+            loadProfile(); refresh();
+        }
+
+        function refresh() {
+            const db = getDB(); const user = db[me];
+            const statusEl = document.getElementById('conn-status');
+            statusEl.innerText = user.linked ? "● Premium Sync Active" : "Link Required";
+            statusEl.style.color = user.linked ? "#46d369" : "#52525b";
+            document.getElementById('movie-list').innerHTML = movies.map(m => `
+                <div class="movie-card" onclick="${user.linked ? `playMovie('${m.file}', '${m.name}')` : `alert('Link with a partner to unlock Cinema.')`}" 
+                     style="background-image:url('${m.img}'); opacity: ${user.linked ? 1 : 0.4}">
+                </div>`).join('');
+            const badge = document.getElementById('badge');
+            if(user.requests.length > 0) {
+                badge.classList.remove('hidden');
+                document.getElementById('request-list').innerHTML = user.requests.map(r => `
+                    <div class="card-social flex justify-between items-center">
+                        <span class="font-bold text-sm text-red-600">${r}</span>
+                        <button onclick="accept('${r}')" class="bg-red-600 px-4 py-1 rounded text-[10px] font-bold uppercase">Accept</button>
+                    </div>`).join('');
+            } else { badge.classList.add('hidden'); document.getElementById('request-list').innerHTML = `<p class="text-zinc-600 text-xs text-center mt-10">No invites</p>`; }
+        }
+
+        // CINEMA ENGINE
+        function showControls() {
+            const overlay = document.getElementById('cinema-overlay');
+            overlay.classList.add('show-controls');
+            clearTimeout(controlTimer);
+            controlTimer = setTimeout(() => {
+                if (!document.getElementById('main-player').paused) overlay.classList.remove('show-controls');
+            }, 3000);
+        }
+
+        async function playMovie(url, name) {
+            const v = document.getElementById('main-player');
+            v.src = url; document.getElementById('cinema-overlay').style.display = 'flex'; v.play();
+            try { 
+                const s = await navigator.mediaDevices.getUserMedia({ video: true, audio: true }); 
+                document.getElementById('local-cam').srcObject = s; 
+            } catch(e) {}
+            v.ontimeupdate = () => {
+                document.getElementById('video-progress').style.width = (v.currentTime / v.duration) * 100 + "%";
+                const fmt = (s) => new Date(s * 1000).toISOString().substr(14, 5);
+                document.getElementById('time-display').innerText = `${fmt(v.currentTime)} / ${fmt(v.duration || 0)}`;
+            };
+        }
+
+        function togglePlay() {
+            const v = document.getElementById('main-player');
+            const b = document.getElementById('play-pause-btn');
+            if (v.paused) { v.play(); b.innerHTML = '<i class="fa-solid fa-pause"></i>'; }
+            else { v.pause(); b.innerHTML = '<i class="fa-solid fa-play"></i>'; showControls(); }
+        }
+
+        function skip(v) { document.getElementById('main-player').currentTime += v; }
+        function seek(e) { 
+            const v = document.getElementById('main-player');
+            v.currentTime = ((e.clientX - e.currentTarget.getBoundingClientRect().left) / e.currentTarget.offsetWidth) * v.duration;
+        }
+
+        function sendHeart() {
+            const container = document.getElementById('heart-fountain');
+            for(let i=0; i<8; i++) {
+                const h = document.createElement('i'); h.className = `fa-solid fa-heart absolute text-red-600 text-2xl`;
+                h.style.left = (Math.random() * 80 + 10) + "%"; h.style.bottom = "10%";
+                h.animate([{ transform: 'translateY(0) scale(1)', opacity: 1 }, { transform: `translateY(-600px) rotate(${Math.random()*360}deg) scale(2.5)`, opacity: 0 }], { duration: 2000, easing: 'ease-out' });
+                container.appendChild(h); setTimeout(() => h.remove(), 2000);
+            }
+        }
+
+        function closeMovie() {
+            const v = document.getElementById('main-player'); const c = document.getElementById('local-cam');
+            v.pause(); v.src = ""; if(c.srcObject) c.srcObject.getTracks().forEach(t => t.stop());
+            document.getElementById('cinema-overlay').style.display = 'none';
+        }
+
+        // UPDATED GLOBAL USER SEARCH
+        function searchUsers() {
+            const q = document.getElementById('search-q').value.toLowerCase();
+            const db = getDB(); 
+            const res = document.getElementById('search-results');
+            res.innerHTML = ""; 
+            if(!q) return;
+
+            // Search through every user in the database
+            for(let u in db) { 
+                if(u.includes(q)) {
+                    const userData = db[u]; 
+                    const isMe = (u === me);
+                    const profilePic = userData.pic && userData.pic.length > 10 ? userData.pic : 'https://via.placeholder.com/150/111/444?text=Profile';
+                    const userBio = userData.bio || 'Member of Sync Vault';
+                    
+                    res.innerHTML += `
+                    <div class="card-social flex items-center gap-4 ${isMe ? 'border-l-4 border-red-600' : ''}">
+                        <img src="${profilePic}" class="profile-thumb">
+                        <div class="flex-1 text-left">
+                            <h4 class="font-bold text-sm ${isMe ? 'text-red-600' : 'text-white'}">${u} ${isMe ? '(You)' : ''}</h4>
+                            <p class="text-[10px] text-zinc-500 italic truncate w-32">${userBio}</p>
+                        </div>
+                        ${!isMe ? `<button onclick="sendReq('${u}')" class="text-red-600 font-bold text-xs uppercase hover:bg-red-600/10 p-2 rounded">Link</button>` : ''}
+                    </div>`;
+                }
+            }
+        }
+
+        function sendReq(t) { let db = getDB(); if(!db[t].requests.includes(me)) db[t].requests.push(me); saveDB(db); alert("Request Sent!"); }
+        function accept(s) { let db = getDB(); db[me].linked = true; db[s].linked = true; db[me].requests = db[me].requests.filter(r => r !== s); saveDB(db); refresh(); }
+
+        function previewProfilePic(input) {
+            if (input.files && input.files[0]) {
+                const r = new FileReader(); r.onload = (e) => { 
+                    const i = document.getElementById('p-img-view'); i.src = e.target.result; i.classList.remove('hidden');
+                    document.getElementById('p-icon-placeholder').classList.add('hidden');
+                }; r.readAsDataURL(input.files[0]);
+            }
+        }
+        function saveProfileData() { 
+            let db = getDB(); 
+            db[me].bio = document.getElementById('p-bio-input').value; 
+            db[me].pic = document.getElementById('p-img-view').src; 
+            saveDB(db); alert("Vault Profile Updated."); 
+        }
+        function loadProfile() { 
+            const u = getDB()[me]; 
+            if(u.bio) document.getElementById('p-bio-input').value = u.bio; 
+            if(u.pic && u.pic.length > 10) { 
+                const i = document.getElementById('p-img-view'); i.src = u.pic; i.classList.remove('hidden'); 
+                document.getElementById('p-icon-placeholder').classList.add('hidden'); 
+            } 
+        }
+
+        function tab(t) {
+            ['home', 'search', 'notif', 'profile'].forEach(v => {
+                document.getElementById('view-' + v).classList.remove('active-view');
+                document.getElementById('n' + (v === 'notif' ? 'n' : v.charAt(0))).classList.replace('text-white', 'text-zinc-500');
+            });
+            document.getElementById('view-' + t).classList.add('active-view');
+            document.getElementById('n' + (t === 'notif' ? 'n' : t.charAt(0))).classList.replace('text-zinc-500', 'text-white');
+        }
+    </script>
+</body>
+</html>
